@@ -4,206 +4,205 @@
 ! the update to respiration in Serra-Pompei (2022).
 !
 module copepods
-  use globals
-  use spectrum
-  use input
-  implicit none
+    use globals
+    use spectrum
+    use input
+    implicit none
 
-  integer, parameter :: passive = 1
-  integer, parameter :: active = 2
+    integer, parameter :: passive = 1
+    integer, parameter :: active = 2
 
-  private
+    private
 
-  real(dp) :: epsilonF  ! Assimilation efficiency
-  real(dp) :: epsilonR  ! Reproductive efficiency
-  real(dp) :: beta
-  real(dp) :: sigma 
-  real(dp) :: alphaF  ! Clearance rate coefficient
-  real(dp) :: q  ! Exponent of clerance rate
-  real(dp) :: h  ! Factor for maximum ingestion rate
-  real(dp) :: hExponent  ! Exponent for maximum ingestions rate
-  real(dp) :: kBasal ! 0.006 ! Factor for basal metabolism.This value represents basal
-  real(dp) :: kSDA  ! Factor for SDA metabolism (Serra-Pompei 2020). This value assumes that the
-  real(dp) :: AdultOffspring
-  real(dp) :: vulnerability ! Passed to "palatability" in the parent spectrum class
+    real(dp) :: epsilonF  ! Assimilation efficiency
+    real(dp) :: epsilonR  ! Reproductive efficiency
+    real(dp) :: beta
+    real(dp) :: sigma
+    real(dp) :: alphaF  ! Clearance rate coefficient
+    real(dp) :: q  ! Exponent of clerance rate
+    real(dp) :: h  ! Factor for maximum ingestion rate
+    real(dp) :: hExponent  ! Exponent for maximum ingestions rate
+    real(dp) :: kBasal ! 0.006 ! Factor for basal metabolism.This value represents basal
+    real(dp) :: kSDA  ! Factor for SDA metabolism (Serra-Pompei 2020). This value assumes that the
+    real(dp) :: AdultOffspring
+    real(dp) :: vulnerability ! Passed to "palatability" in the parent spectrum class
 
-  type, extends(spectrumMulticellular) :: spectrumCopepod
-    integer :: feedingmode ! Active=1; Passive=2
-    real(dp), allocatable :: gamma(:), g(:), mortStarve(:), mort(:), JrespFactor(:)
-  contains
-    procedure, pass :: initCopepod
-    procedure :: calcDerivativesCopepod
-    procedure :: printRates => printRatesCopepod
-  end type spectrumCopepod
-  
-  public active, passive, spectrumCopepod, initCopepod, calcDerivativesCopepod, printRatesCopepod
+    type, extends(spectrumMulticellular) :: spectrumCopepod
+        integer :: feedingmode ! Active=1; Passive=2
+        real(dp), allocatable :: gamma(:), g(:), mortStarve(:), mort(:), JrespFactor(:)
+    contains
+        procedure, pass :: initCopepod
+        procedure :: calcDerivativesCopepod
+        procedure :: printRates => printRatesCopepod
+    end type spectrumCopepod
+
+    public active, passive, spectrumCopepod, initCopepod, calcDerivativesCopepod, printRatesCopepod
 
 contains
 
-  subroutine read_namelist(feedingmode)
-    integer, intent(in) :: feedingmode
-    integer :: file_unit,io_err
+    subroutine read_namelist(feedingmode)
+        integer, intent(in) :: feedingmode
+        integer :: file_unit, io_err
 
-    namelist /input_copepods_passive / epsilonF, epsilonR, beta, sigma, alphaF,q, &
-             & h, hExponent, kBasal, kSDA, AdultOffspring, vulnerability
-    namelist /input_copepods_active /  epsilonF, epsilonR, beta, sigma, alphaF,q, &
-             & h, hExponent, kBasal, kSDA, AdultOffspring, vulnerability
-    
-    call open_inputfile(file_unit, io_err)
+        namelist /input_copepods_passive/ epsilonF, epsilonR, beta, sigma, alphaF, q, &
+                 & h, hExponent, kBasal, kSDA, AdultOffspring, vulnerability
+        namelist /input_copepods_active/ epsilonF, epsilonR, beta, sigma, alphaF, q, &
+                 & h, hExponent, kBasal, kSDA, AdultOffspring, vulnerability
 
-    if (feedingmode .eq. active) then
-      read(file_unit, nml=input_copepods_active, iostat=io_err)
-    else
-      if (feedingmode .eq. passive) then
-        read(file_unit, nml=input_copepods_passive, iostat=io_err)
-      else
-        stop
-      endif
-    endif
+        call open_inputfile(file_unit, io_err)
 
-    call close_inputfile(file_unit, io_err)
-  end subroutine read_namelist
+        if (feedingmode .eq. active) then
+            read (file_unit, nml=input_copepods_active, iostat=io_err)
+        else
+            if (feedingmode .eq. passive) then
+                read (file_unit, nml=input_copepods_passive, iostat=io_err)
+            else
+                stop
+            end if
+        end if
 
-  subroutine initCopepod(this, feedingmode, n, mAdult)
-    class(spectrumCopepod), intent(inout):: this
-    integer, intent(in) :: feedingmode ! Whether the copepods is active or passive
-    integer, intent(in):: n
-    real(dp), intent(in):: mAdult
-    real(dp):: lnDelta, mMin
+        call close_inputfile(file_unit, io_err)
+    end subroutine read_namelist
 
-    this%feedingmode = feedingmode
+    subroutine initCopepod(this, feedingmode, n, mAdult)
+        class(spectrumCopepod), intent(inout):: this
+        integer, intent(in) :: feedingmode ! Whether the copepods is active or passive
+        integer, intent(in):: n
+        real(dp), intent(in):: mAdult
+        real(dp):: lnDelta, mMin
 
-    call read_namelist(this%feedingmode)
-    !
-    ! Calc grid. Grid runs from mLower(1) = offspring size to m(n) = adult size
-    !
-    lnDelta = (log(mAdult)-log(mAdult/AdultOffspring)) / (n-0.5)
-    mMin = exp(log(mAdult/AdultOffspring)+0.5*lnDelta);
-    call this%initSpectrum(n, mMin, mAdult)
+        this%feedingmode = feedingmode
 
-    allocate(this%gamma(n))
-    allocate(this%g(n))
-    allocate(this%mortStarve(n))
-    allocate(this%mort(n))
-    allocate(this%JrespFactor(n))
+        call read_namelist(this%feedingmode)
+        !
+        ! Calc grid. Grid runs from mLower(1) = offspring size to m(n) = adult size
+        !
+        lnDelta = (log(mAdult) - log(mAdult/AdultOffspring))/(n - 0.5)
+        mMin = exp(log(mAdult/AdultOffspring) + 0.5*lnDelta); 
+        call this%initSpectrum(n, mMin, mAdult)
 
-    this%beta = beta
-    this%sigma = sigma
-    this%epsilonF = epsilonF
-    this%AF = alphaF*this%m**q
-    this%JFmax = h*this%m**hExponent
-    this%JrespFactor = epsilonF*this%JFmax
-    this%mort2constant = 0.d0 ! No quadratic mortality
-    this%mort2 = 0.d0
-    this%palatability = vulnerability
+        allocate (this%gamma(n))
+        allocate (this%g(n))
+        allocate (this%mortStarve(n))
+        allocate (this%mort(n))
+        allocate (this%JrespFactor(n))
 
-    this%mPOM = 3.5e-3*this%m ! Size of fecal pellets (Serra-Pompei 2022 approximated)
-  end subroutine initCopepod
+        this%beta = beta
+        this%sigma = sigma
+        this%epsilonF = epsilonF
+        this%AF = alphaF*this%m**q
+        this%JFmax = h*this%m**hExponent
+        this%JrespFactor = epsilonF*this%JFmax
+        this%mort2constant = 0.d0 ! No quadratic mortality
+        this%mort2 = 0.d0
+        this%palatability = vulnerability
 
-  subroutine calcDerivativesCopepod(this, u, dNdt, dudt)
-    class(spectrumCopepod), intent(inout):: this
-    real(dp), intent(in):: u(this%n)
-    real(dp), intent(inout):: dNdt, dudt(this%n)
-    integer:: i
-    real(dp):: nu, b
+        this%mPOM = 3.5e-3*this%m ! Size of fecal pellets (Serra-Pompei 2022 approximated)
+    end subroutine initCopepod
 
-    do i = 1, this%n
-       !
-       ! Growth and reproduction:
-       !
+    subroutine calcDerivativesCopepod(this, u, dNdt, dudt)
+        class(spectrumCopepod), intent(inout):: this
+        real(dp), intent(in):: u(this%n)
+        real(dp), intent(inout):: dNdt, dudt(this%n)
+        integer:: i
+        real(dp):: nu, b
 
-       ! Basal and SDA respiration:
-       this%Jresp(i) = this%JrespFactor(i) * kBasal * fTemp2 + kSDA * this%JF(i)
-       ! Available energy:
-       nu = this%JF(i) - this%Jresp(i)
-       ! Available energy rate (1/day):
-       this%g(i) = max(0.d0, nu)/this%m(i)
-       ! Starvation:
-       this%mortStarve(i) = -min(0.d0, nu)/this%m(i)
-       !
-       ! Mortality:
-       !
-       this%mortHTL(i) = this%mortHTL(i) * fTemp2     
+        do i = 1, this%n
+            !
+            ! Growth and reproduction:
+            !
 
-       this%mort(i) = this%mortpred(i) + this%mortStarve(i) + this%mortHTL(i)
-       ! Flux:
-       if ( this%g(i) .ne. 0.) then
-         this%gamma(i) = (this%g(i)-this%mort(i)) / (1 - this%z(i)**(1-this%mort(i)/this%g(i)))
-       else
-         this%gamma(i) = 0.d0
-       end if
-       this%Jtot(i) = nu
-    end do
-    b = epsilonR * this%g(this%n) ! Birth rate
-    ! Production of POM:
-    this%jPOM = &
-          (1-epsilonF)*this%JF/(this%m * epsilonF) & ! Unassimilated food
-        + this%mortStarve*u                          ! Copepods dead from starvation
-    ! From unassimilated feeding (fecal pellets)
-    this%jPOM(this%n) = this%jPOM(this%n) + (1.d0-epsilonR)*this%g(this%n) ! Lost reproductive flux
-  
-    !
-    ! Assemble derivatives:
-    !
-    ! 1st stage:
-    dudt(1) = b*u(this%n) &
-         + (this%g(1) - this%gamma(1) - this%mort(1))*u(1)
-    ! Middle stages:
-    do i = 2, this%n-1
-       dudt(i) = &
-            this%gamma(i-1)*u(i-1) & ! growth into group
-            + (this%g(i) - this%gamma(i) - this%mort(i))*u(i)  ! growth out of group
-    end do
-    !Adults
-    dudt(this%n) = &
-         this%gamma(this%n-1)*u(this%n-1) & ! growth into adult group
-         - this%mort(this%n)*u(this%n); ! adult mortality
+            ! Basal and SDA respiration:
+            this%Jresp(i) = this%JrespFactor(i)*kBasal*fTemp2 + kSDA*this%JF(i)
+            ! Available energy:
+            nu = this%JF(i) - this%Jresp(i)
+            ! Available energy rate (1/day):
+            this%g(i) = max(0.d0, nu)/this%m(i)
+            ! Starvation:
+            this%mortStarve(i) = -min(0.d0, nu)/this%m(i)
+            !
+            ! Mortality:
+            !
+            this%mortHTL(i) = this%mortHTL(i)*fTemp2
 
-    dNdt = dNdt + sum( this%Jresp*u/this%m )/rhoCN  ! All respiration of carbon results in a corresponding
-                                    ! surplus of nutrients. This surplus (pee) is routed to nutrients
-                !+ (1-epsilonR)*this%g(this%n)*u(this%n)/rhoCN  ! Should perhaps also go to DOC
-    !
-    ! Check balance: (should be zero)
-    !
-    !write(*,*) 'Copepod N balance:', &
-    !      + sum(this%JF/this%m*u)/rhoCN &  ! Gains from feeding
-    !      - sum(dudt)/rhoCN & ! Accumulation of biomass
-    !      - sum( this%Jresp*u/(this%m*rhoCN) ) & ! Losses from respiration
-    !      - (1-epsilonR)*this%g(this%n)*u(this%n)/rhoCN  & ! Losses from reproduction
-    !      - sum(this%mort*u)/rhoCN  ! Mortality losses
+            this%mort(i) = this%mortpred(i) + this%mortStarve(i) + this%mortHTL(i)
+            ! Flux:
+            if (this%g(i) .ne. 0.) then
+                this%gamma(i) = (this%g(i) - this%mort(i))/(1 - this%z(i)**(1 - this%mort(i)/this%g(i)))
+            else
+                this%gamma(i) = 0.d0
+            end if
+            this%Jtot(i) = nu
+        end do
+        b = epsilonR*this%g(this%n) ! Birth rate
+        ! Production of POM:
+        this%jPOM = &
+            (1 - epsilonF)*this%JF/(this%m*epsilonF) & ! Unassimilated food
+            + this%mortStarve*u                          ! Copepods dead from starvation
+        ! From unassimilated feeding (fecal pellets)
+        this%jPOM(this%n) = this%jPOM(this%n) + (1.d0 - epsilonR)*this%g(this%n) ! Lost reproductive flux
 
-  end subroutine calcDerivativesCopepod
+        !
+        ! Assemble derivatives:
+        !
+        ! 1st stage:
+        dudt(1) = b*u(this%n) &
+                  + (this%g(1) - this%gamma(1) - this%mort(1))*u(1)
+        ! Middle stages:
+        do i = 2, this%n - 1
+            dudt(i) = &
+                this%gamma(i - 1)*u(i - 1) & ! growth into group
+                + (this%g(i) - this%gamma(i) - this%mort(i))*u(i)  ! growth out of group
+        end do
+        !Adults
+        dudt(this%n) = &
+            this%gamma(this%n - 1)*u(this%n - 1) & ! growth into adult group
+            - this%mort(this%n)*u(this%n); ! adult mortality
+ dNdt = dNdt + sum(this%Jresp*u/this%m)/rhoCN  ! All respiration of carbon results in a corresponding
+        ! surplus of nutrients. This surplus (pee) is routed to nutrients
+        !+ (1-epsilonR)*this%g(this%n)*u(this%n)/rhoCN  ! Should perhaps also go to DOC
+        !
+        ! Check balance: (should be zero)
+        !
+        !write(*,*) 'Copepod N balance:', &
+        !      + sum(this%JF/this%m*u)/rhoCN &  ! Gains from feeding
+        !      - sum(dudt)/rhoCN & ! Accumulation of biomass
+        !      - sum( this%Jresp*u/(this%m*rhoCN) ) & ! Losses from respiration
+        !      - (1-epsilonR)*this%g(this%n)*u(this%n)/rhoCN  & ! Losses from reproduction
+        !      - sum(this%mort*u)/rhoCN  ! Mortality losses
 
-  subroutine printRatesCopepod(this)
-   class(spectrumCopepod), intent(in):: this
-   character(7) :: type
+    end subroutine calcDerivativesCopepod
 
-   if (this%feedingmode .eq. passive) then
-      type = 'Passive'
-   else
-      type = 'Active'
-   endif
+    subroutine printRatesCopepod(this)
+        class(spectrumCopepod), intent(in):: this
+        character(7) :: type
 
-   write(*,*) type, " copepod with ", this%n, " size classes and adult size ", this%m(this%n), "ugC."
-     call this%printRatesSpectrum()
+        if (this%feedingmode .eq. passive) then
+            type = 'Passive'
+        else
+            type = 'Active'
+        end if
 
-     99 format (a10, 20f10.6)
- 
-     write(*,99) "gamma:", this%gamma
-     write(*,99) "mortStarve:", this%mortStarve
-     write(*,99) "g:", this%g
-  end subroutine printRatesCopepod
+        write (*, *) type, " copepod with ", this%n, " size classes and adult size ", this%m(this%n), "ugC."
+        call this%printRatesSpectrum()
 
-  !function getNbalanceCopepods(this, N, dNdt, u, dudt) result(Nbalance)
-  !  real(dp):: Nbalance
-  !  class(spectrumCopepods), intent(in):: this
-  !  real(dp), intent(in):: N,dNdt, u(this%n), dudt(this%n)
+99      format(a10, 20f10.6)
 
-  !  Nbalance = (dNdt + sum( dudt & ! Change in standing stock of N
-  !    + (1-fracHTL_to_N)*this%mortHTL*u & ! HTL not remineralized
-  !    + (1-remin2)*this%mort2*u & ! Viral mortality not remineralized
-      !+ (1-reminF)*this%JCloss_feeding/this%m * u & ! Feeding losses not remineralized
-  !       )/rhoCN)/N
-  !end function getNbalanceCopepods
+        write (*, 99) "gamma:", this%gamma
+        write (*, 99) "mortStarve:", this%mortStarve
+        write (*, 99) "g:", this%g
+    end subroutine printRatesCopepod
+
+    !function getNbalanceCopepods(this, N, dNdt, u, dudt) result(Nbalance)
+    !  real(dp):: Nbalance
+    !  class(spectrumCopepods), intent(in):: this
+    !  real(dp), intent(in):: N,dNdt, u(this%n), dudt(this%n)
+
+    !  Nbalance = (dNdt + sum( dudt & ! Change in standing stock of N
+    !    + (1-fracHTL_to_N)*this%mortHTL*u & ! HTL not remineralized
+    !    + (1-remin2)*this%mort2*u & ! Viral mortality not remineralized
+    !+ (1-reminF)*this%JCloss_feeding/this%m * u & ! Feeding losses not remineralized
+    !       )/rhoCN)/N
+    !end function getNbalanceCopepods
 
 end module copepods
